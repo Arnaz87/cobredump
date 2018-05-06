@@ -1,7 +1,12 @@
 #!/usr/bin/env lua
 
-local filename = arg[1] or "out"
-file = io.open(filename, "rb")
+if #arg < 1 then
+  print("Usage: " .. arg[0] .. " [--no-metadata] <file>")
+  print("  prints the contents of a Cobre module")
+  os.exit(0)
+end
+
+local file = io.open(arg[#arg], "rb")
 
 local colors = {
   reset = "\x1b[0;39m",
@@ -482,7 +487,7 @@ readconstants()
 pushsep()
 readallcode()
 
-if arg[2] ~= "--no-metadata" then
+if arg[1] ~= "--no-metadata" then
   pushsep()
   pushline("Metadata")
   readmetadata("", "")
