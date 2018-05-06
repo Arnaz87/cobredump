@@ -203,6 +203,14 @@ local types = {}
 local tcount = {}
 local fcount = {}
 
+function tcount:add (name)
+  if name then
+    local c = self[name] or 0
+    self[name] = c+1
+  end
+end
+fcount.add = tcount.add
+
 function modules.new (id, name)
   local mod = {id=id, name=name}
   modules[id] = mod
@@ -224,10 +232,7 @@ end
 modules.new(0, "argument")
 
 function types.new (id, name)
-  if name then
-    local c = tcount[name] or 0
-    tcount[name] = c+1
-  end
+  if name then tcount:add(name) end
   local ty = {id=id, origname=name}
   types[id] = ty
   return ty
@@ -318,6 +323,8 @@ function readtypes ()
     else
       kbuf.color = colors.module
       local name = rstr()
+      tp.name = name
+      tcount:add(name)
       pushline(indexstr, modules.get(k-1), ".", colors.string, name)
     end
   end
@@ -354,7 +361,8 @@ function readfunctions ()
     pushline("  (", ins, ") -> (", outs, ")")
     if k > 1 then
       local name = rstr()
-      pushline("  ", modules.get(k-3), ".", colors.string, name)
+      fn.name = name
+      pushline("  ", modules.get(k-2), ".", colors.string, name)
     end
   end
 end
@@ -366,7 +374,7 @@ function readconstants ()
     local fn = functions.new()
     fn.ins = 0
     fn.outs = 1
-    local id = functions.get(fn.id)
+    local id = functions.get(fn.id+1)
     local k, kbuf = rint()
     if k == 1 then
       local n = rint()
