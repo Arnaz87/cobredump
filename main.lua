@@ -1,3 +1,4 @@
+#!/usr/bin/env lua
 
 local filename = arg[1] or "out"
 file = io.open(filename, "rb")
@@ -5,7 +6,7 @@ file = io.open(filename, "rb")
 local colors = {
   reset = "\x1b[0;39m",
   string = "\x1b[1;30m",
-  error = "\x1b[1;31m",
+  error = "\x1b[1;41m",
   module = "\x1b[0;34m",
   type = "\x1b[0;36m",
   func = "\x1b[0;35m",
@@ -29,12 +30,12 @@ end
 
 local ascii = {"nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel", "bs",
   "ht", "lf", "vt", "ff", "cr", "so", "si", "dle", "dc1", "dc2", "dc3", "dc4",
-  "nak", "syn", "etb", "can", "em", "sub", "esc", "fs", "gs", "rs", "us"}
+  "nak", "syn", "etb", "can", "em", "sub", "esc", "fs", "gs", "rs", "us", "sp"}
 
 function pushstr ()
   for i = 1, #bytebuf do
     local b, ch = bytebuf[i]
-    if b < 32 then ch = ascii[b+1]
+    if b <= 32 then ch = ascii[b+1]
     elseif b == 127 then ch = "del"
     else ch = string.char(bytebuf[i]) end
     bytebuf[i] = ch
@@ -42,10 +43,11 @@ function pushstr ()
   return pushbytes(colors.string)
 end
 
-function pushline (info, extra)
-  local line = {bytes=linebuf, info=info or "", extra=extra or ""}
+function pushline (...)
+  local line = {bytes=linebuf, info=table.pack(...), extra=""}
   table.insert(lines, line)
   linebuf = {}
+  return line
 end
 
 function rbyte ()
@@ -70,7 +72,7 @@ function rint (color)
 end
 
 function rstr ()
-  local count, countbuf = rint(colors.string)
+  local count, countbuf = rint()
   local str = file:read(count)
   for i = 1, count do
     local b = str:byte(i)
@@ -78,7 +80,6 @@ function rstr ()
   end
   local strbuf = pushstr()
   if #str ~= count then
-    strbuf.color = colors.error
     countbuf.color = colors.error
     fail("string too long")
   else return str, strbuf end
@@ -106,10 +107,16 @@ function printall ()
       goto endloop
     end
 
-    local info
-    if type(data.info) == "function" then
-      info = data.info()
-    else info = data.info end
+    function tos (v, sep)
+      if type(v) == "function" then return v()
+      elseif type(v) == "table" then
+        for i, u in ipairs(v) do v[i] = tos(u) end
+        return table.concat(v, v.sep or sep or " ")
+      else return tostring(v) end
+    end
+
+    -- Call all functions and store their result
+    local info = tos(data.info, "")
 
     local n = 0
     local line = ("%4x"):format(pos) .. ":"
@@ -165,7 +172,7 @@ function readsig ()
 
   function _fail ()
     pushbytes(colors.error)
-    pushline("Signature: " .. colors.string .. match .. colors.error .. sig)
+    pushline("Signature: ", colors.string, match, colors.error, sig)
     fail()
   end
 
@@ -181,21 +188,77 @@ function readsig ()
     pushbytes()
   else return _fail() end
 
-  pushline("Signature: " .. colors.string .. match)
+  pushline("Signature: ", colors.string, match)
+end
+
+local modules = {}
+local functions = {}
+local types = {}
+
+local tcount = {}
+local fcount = {}
+
+function modules.new (id, name)
+  local mod = {id=id, name=name}
+  modules[id] = mod
+  return mod
+end
+function modules.get (id)
+  return function ()
+    local self = modules[id]
+    if not self then return colors.error .. id .. colors.reset end
+    return colors.module .. (self.name or self.id) .. colors.reset
+  end
+end
+
+function types.new (id, name)
+  if name then
+    local c = tcount[name] or 0
+    tcount[name] = c+1
+  end
+  local ty = {id=id, origname=name}
+  types[id] = ty
+  return ty
+end
+function types.get (id)
+  return function ()
+    local self = types[id]
+    if not self then return colors.error .. id .. colors.reset end
+    local name = self.name or self.origname
+    if not name or tcount[name] > 1 then name = self.id end
+    return colors.type .. name .. colors.reset
+  end
+end
+
+function functions.get (id)
+  return function ()
+    local self = functions[id+1]
+    if not self then
+      return colors.error .. id .. colors.reset
+    end
+    return colors.func .. (self.name or id) .. colors.reset
+  end
+end
+function functions.new ()
+  local id = #functions-1
+  local fn = {id=id}
+  table.insert(functions, fn)
+  return fn
 end
 
 function readmodules ()
   local count = rint()
   pushline(count .. " modules")
   for i = 1, count do
-    local indexstr = colors.module .. (i-1) .. colors.reset .. ": "
+    local mod = modules.new(i-1)
     local k = rint()
     if k == 0 then
       local name = rstr()
-      pushline(indexstr .. "import " .. colors.string .. name)
+      mod.name = name
+      pushline(modules.get(i-1), ": import ", colors.string, name)
     elseif k == 1 then
       local itemcount = rint()
-      pushline(indexstr .. "define " .. itemcount .. " items")
+      pushline(modules.get(i-1), ": define ", itemcount, " items")
       for j = 1, itemcount do
         local k = rint()
         local type, color
@@ -225,52 +288,51 @@ function readtypes ()
   local count = rint()
   pushline(count .. " types")
   for i = 1, count do
-    local indexstr = colors.type .. (i-1) .. colors.reset .. ": "
+    local tp = types.new(i-1)
+    local indexstr ={types.get(i-1), ": ", sep=""}
     local k, kbuf = rint()
     if k == 0 then
-      pushline(indexstr .. " null type")
+      pushline(indexstr, "null type")
     else
       kbuf.color = colors.module
       local name = rstr()
-      pushline(indexstr .. "import module[" .. colors.module .. k-1 .. colors.reset .. "]." .. colors.string .. name)
+      pushline(indexstr, modules.get(k-1), ".", colors.string, name)
     end
   end
 end
-
-local funcs = {}
 
 function readfunctions ()
   local count = rint()
   pushline(count .. " functions")
   for i = 1, count do
-    local indexstr = colors.func .. (i-1) .. colors.reset .. ": "
+    local fn = functions.new()
+    local indexstr = {functions.get(i-1), ": ", sep=""}
     local k, kbuf = rint()
     if k == 0 then
-      pushline(indexstr .. "null")
+      pushline(indexstr, "null")
     elseif k == 1 then
-      pushline(indexstr .. "code")
+      pushline(indexstr, "code")
+      fn.code = true
     else
       kbuf.color = colors.module
-      pushline(indexstr .. "imported")
+      pushline(indexstr, "import")
     end
-    local ins, outs = {}, {}
+    local ins, outs = {sep=", "}, {sep=", "}
 
-    local inc = rint()
-    for i = 1, inc do
-      table.insert(ins, colors.type .. rint(colors.type) .. colors.reset)
-    end
-
-    local outc = rint()
-    for i = 1, outc do
-      table.insert(outs, colors.type .. rint(colors.type) .. colors.reset)
+    fn.ins = rint()
+    for i = 1, fn.ins do
+      table.insert( ins, types.get(rint(colors.type)) )
     end
 
-    table.insert(funcs, {ins=inc, outs=outc, code=k==1})
+    fn.outs = rint()
+    for i = 1, fn.outs do
+      table.insert( outs, types.get(rint(colors.type)) )
+    end
 
-    pushline("  " .. table.concat(ins , " ") .. colors.reset .. " -> " .. table.concat(outs , " "))
+    pushline("  (", ins, ") -> (", outs, ")")
     if k > 1 then
       local name = rstr()
-      pushline("  module[" .. colors.module .. k-2 .. colors.reset .. "]." .. colors.string .. name)
+      pushline("  ", modules.get(k-3), ".", colors.string, name)
     end
   end
 end
@@ -279,27 +341,29 @@ function readconstants ()
   local count = rint()
   pushline(count .. " constants")
   for i = 1, count do
-    local indexstr = colors.func .. (#funcs+i-1) .. colors.reset .. ": "
+    local fn = functions.new()
+    fn.ins = 0
+    fn.outs = 1
+    local id = functions.get(fn.id)
     local k, kbuf = rint()
     if k == 1 then
       local n = rint()
-      pushline(indexstr .. "int " .. n)
+      pushline(id, ": int " .. n)
     elseif k == 2 then
       local str = rstr()
-      pushline(indexstr .. "bin " .. colors.string .. str)
+      pushline(id, ": bin " .. colors.string .. str)
     elseif k >= 16 then
       kbuf.color = colors.func
       local ix = k-16
       local argc = 0
-      if ix < #funcs then
-        argc = funcs[ix+1].ins
+      if ix < #functions then
+        argc = functions[ix+1].ins
       end
-      local args = {}
+      local args = {sep=", "}
       for i = 1, argc do
-        local arg = rint(colors.func)
-        table.insert(args, arg)
+        table.insert(args, functions.get(rint(colors.func)))
       end
-      pushline(indexstr .. "call function[" .. colors.func .. ix .. colors.reset .. "](" .. colors.func .. table.concat(args, " ") .. colors.reset .. ")")
+      pushline(id, ": ", functions.get(ix), "(", args, ")")
     else fail("unknown constant kind " .. k) end
   end
 end
@@ -330,7 +394,7 @@ function readcode (index, fn)
       local j = rint(colors.inst)
       local a = rint(colors.reg)
       line = "jif " .. colors.inst .. j .. colors.reg .. " " .. a
-    elseif k == 6 then
+    elseif k == 7 then
       local j = rint(colors.inst)
       local a = rint(colors.reg)
       line = "nif " .. colors.inst .. j .. colors.reg .. " " .. a
@@ -347,29 +411,30 @@ function readcode (index, fn)
       local ix = k-16
       local argc = 0
       outs = 1
-      if ix < #funcs then
-        argc = funcs[ix+1].ins
-        outs = funcs[ix+1].outs
+      if ix < #functions then
+        argc = functions[ix+1].ins
+        outs = functions[ix+1].outs
       end
       local args = {}
       for i = 1, argc do
         local arg = rint(colors.reg)
-        table.insert(args, arg)
+        table.insert(args, colors.reg .. arg .. colors.reset)
       end
-      line = "function[" .. colors.func .. ix .. colors.reset .. "](" .. colors.reg .. table.concat(args, " ") .. colors.reset .. ")"
+      line = {functions.get(ix)(), "(", table.concat(args, ", "), ")", sep=""}
     else fail("unknown instruction " .. k) end
+    local reg = ""
     if outs > 0 then
       local o = {}
       for i = 0, outs-1 do table.insert(o, regs + i) end
-      line = "[" .. colors.reg .. table.concat(o, " ") .. colors.reset .. "] " .. line
+      reg = "[" .. colors.reg .. table.concat(o, " ") .. colors.reset .. "] "
       regs = regs + outs
     end
-    pushline(colors.inst .. i .. colors.reset .. ": " .. line)
+    pushline(colors.inst .. i .. colors.reset .. ": ", reg, line)
   end
 end
 
 function readallcode ()
-  for i, fn in ipairs(funcs) do
+  for i, fn in ipairs(functions) do
     if fn.code then readcode(i-1, fn) end
   end
 end
@@ -395,7 +460,7 @@ function readmetadata (indent1, indent2)
         str = str .. string.char(rbyte())
       end
       pushstr()
-      pushline(indent1 .. colors.string .. str, indent2)
+      pushline(indent1 .. colors.string .. str).extra = indent2
     end
   end
 end
@@ -416,8 +481,11 @@ pushsep()
 readconstants()
 pushsep()
 readallcode()
-pushsep()
-pushline("Metadata")
-readmetadata("", "")
+
+if arg[2] ~= "--no-metadata" then
+  pushsep()
+  pushline("Metadata")
+  readmetadata("", "")
+end
 
 printall()
