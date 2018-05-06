@@ -208,13 +208,20 @@ function modules.new (id, name)
   modules[id] = mod
   return mod
 end
+function modules.getname (id)
+  local self = modules[id]
+  local name = self.name or self.id
+  if type(name) == "function" then name = name() end
+  return name
+end
 function modules.get (id)
   return function ()
-    local self = modules[id]
-    if not self then return colors.error .. id .. colors.reset end
-    return colors.module .. (self.name or self.id) .. colors.reset
+    if not modules[id] then return colors.error .. id .. colors.reset end
+    return colors.module .. modules.getname(id) .. colors.reset
   end
 end
+
+modules.new(0, "argument")
 
 function types.new (id, name)
   if name then
@@ -255,15 +262,16 @@ function readmodules ()
   local count = rint()
   pushline(count .. " modules")
   for i = 1, count do
-    local mod = modules.new(i-1)
+    local mod = modules.new(i)
     local k = rint()
-    if k == 0 then
+    if k == 0 or k == 2 then
+      local ftor = "" if k == 2 then ftor = "(functor) " end
       local name = rstr()
       mod.name = name
-      pushline(modules.get(i-1), ": import ", colors.string, name)
+      pushline(modules.get(i), ": import " .. ftor, colors.string, name)
     elseif k == 1 then
       local itemcount = rint()
-      pushline(modules.get(i-1), ": define ", itemcount, " items")
+      pushline(modules.get(i), ": define ", itemcount, " items")
       for j = 1, itemcount do
         local k = rint()
         local type, color
@@ -283,6 +291,15 @@ function readmodules ()
         local name = rstr()
         pushline("  " .. type .. " " .. color .. ix .. " " .. colors.string .. name)
       end
+    elseif k == 3 then
+      local ix = rint(colors.module)
+      local name = rstr()
+      mod.name = function () return modules.getname(ix) .. "." .. name end
+      pushline(modules.get(i), ": use ", modules.get(ix), ".", name)
+    elseif k == 4 then
+      local baseix = rint(colors.module)
+      local argix = rint(colors.module)
+      pushline(modules.get(i), ": build ", modules.get(baseix), " with ", modules.get(argix))
     else
       fail("unknown import kind " .. k)
     end
