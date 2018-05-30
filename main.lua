@@ -9,9 +9,9 @@ end
 local file = io.open(arg[#arg], "rb")
 
 local colors = {
-  reset = "\x1b[0;39m",
+  reset = "\x1b[0;39;49m",
   string = "\x1b[1;30m",
-  error = "\x1b[1;41m",
+  error = "\x1b[1;37;41m",
   module = "\x1b[0;34m",
   type = "\x1b[0;36m",
   func = "\x1b[0;35m",
@@ -144,6 +144,7 @@ function printall ()
     end
     pos = pos+n
     if line ~= "" then
+      line = line .. colors.reset
       while n < 8 do
         line = line .. "    "
         n = n+1
@@ -172,7 +173,7 @@ end
 -------------------------------------------------------------------------------
 
 function readsig ()
-  local sig = "Cobre 0.5"
+  local sig = "Cobre 0.6"
   local match = ""
 
   function _fail ()
@@ -269,12 +270,14 @@ function readmodules ()
   for i = 1, count do
     local mod = modules.new(i)
     local k = rint()
-    if k == 0 or k == 2 then
+    if k == 0 then
+      pushline(modules.get(i), ": unknown module")
+    elseif k == 1 then
       local ftor = "" if k == 2 then ftor = "(functor) " end
       local name = rstr()
-      mod.name = name
+      mod.name = name:gsub("\x1f", ".")
       pushline(modules.get(i), ": import " .. ftor, colors.string, name)
-    elseif k == 1 then
+    elseif k == 2 then
       local itemcount = rint()
       pushline(modules.get(i), ": define ", itemcount, " items")
       for j = 1, itemcount do
